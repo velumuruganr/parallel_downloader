@@ -2,8 +2,9 @@ use anyhow::{Result, anyhow, Context};
 use clap::Parser;
 use futures_util::future::join_all;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use tokio::io::{AsyncWriteExt, AsyncSeekExt};
+use tokio::{io::{AsyncSeekExt, AsyncWriteExt}, time::sleep};
 use std::io::SeekFrom;
+use std::time::Duration;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 
 #[derive(Debug, Clone, Copy)]
@@ -71,26 +72,55 @@ async fn get_file_size(url: &str) -> Result<u64> {
 }
 
 async fn download_chunk(url: String, chunk: Chunk, output_file: String, pb: ProgressBar) -> Result<()> {
-    let client = reqwest::Client::new();
-    let range_header = format!("bytes={}-{}", chunk.start, chunk.end);
-    
-    let mut response = client.get(&url).header(RANGE, range_header).send().await?;
+    const MAX_RETRIES: u32 = 5;
+    let mut attempt = 0;
 
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(&output_file)
-        .await
-        .context("Failed to open file")?;
+    loop {
+        attempt += 1;
 
-    file.seek(SeekFrom::Start(chunk.start)).await?;
+        let result = async {
+            let client = reqwest::Client::new();
+            let range_header = format!("bytes={}-{}", chunk.start, chunk.end);
+            
+            let mut response = client.get(&url).header(RANGE, range_header).send().await?;
 
-    while let Some(response_bytes) = response.chunk().await? {
-        pb.inc(response_bytes.len() as u64);
-        file.write_all(&response_bytes).await?;
+            if attempt > 1 {
+                println!("Retry #{}...", attempt);
+            }
+
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&output_file)
+                .await
+                .context("Failed to open file")?;
+
+            file.seek(SeekFrom::Start(chunk.start)).await?;
+
+            while let Some(response_bytes) = response.chunk().await? {
+                pb.inc(response_bytes.len() as u64);
+                file.write_all(&response_bytes).await?;
+            }
+
+            Ok::<(), anyhow::Error>(())
+        }.await;
+
+        match result {
+            Ok(_) => {
+                pb.finish_with_message("Done!");
+                return Ok(());
+            },
+            Err(e) => {
+                if attempt >= MAX_RETRIES {
+                    pb.finish_with_message(format!("Failed..{}", e));
+                    return Err(e);
+                }
+
+                pb.set_message(format!("Error: {}, Retrying in 2s...", e));
+                sleep(Duration::from_secs(2)).await;
+            }
+        }
+
     }
-
-    pb.finish_with_message("Done!");
-    Ok(())
 }
 
 #[tokio::main]
@@ -111,7 +141,7 @@ async fn main() -> Result<()> {
     let multi_progress = MultiProgress::new();
 
     let style = ProgressStyle::with_template(
-        "{msg} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes/total_bytes} ({eta})"
+        "{msg} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})"
     ).unwrap().progress_chars("=>-");
 
     let mut tasks = Vec::new();
