@@ -13,14 +13,23 @@ A robust, concurrent file downloader built in Rust. It is designed to be resilie
 
 ## 📦 Installation
 
-Ensure you have Rust installed. Clone the repository and build:
+### Option 1: Install Globally (Recommended)
+This will install the `pd` command to your system so you can run it from any folder.
 
 ```bash
-git clone https://github.com/velumuruganr/parallel_downloader.git
+git clone https://github.com/yourusername/parallel_downloader.git
 cd parallel_downloader
+cargo install --path .
+```
+You can now run pd from anywhere in your terminal.
+
+### Option 2: Build Locally
+If you prefer not to install it globally:
+
+```bash
 cargo build --release
 ```
-The binary will be located in ./target/release/parallel_downloader
+The binary will be located at ./target/release/pd
 
 ## 🛠 Usage
 
@@ -28,14 +37,14 @@ The binary will be located in ./target/release/parallel_downloader
 
 Download a file with default settings (4 threads).
 ```bash
-cargo run -- --url "https://proof.ovh.net/files/100Mb.dat"
+pd --url "https://proof.ovh.net/files/100Mb.dat"
 ```
 
 ### Advanced Usage
 
 Combine flags for a specific use case:
 ```bash
-cargo run -- \
+pd \
   --url "https://proof.ovh.net/files/100Mb.dat" \
   --output "my_video.dat" \
   --threads 8 \
@@ -63,7 +72,7 @@ parallel_downloader = { path = "../path/to/parallel_downloader" }
 ```
 
 Use the modules in your code:
-```Rust
+```rust
 use parallel_downloader::utils::get_file_size;
 use parallel_downloader::worker::download_chunk;
 
@@ -76,7 +85,7 @@ async fn main() {
 
 ## 🧪 Testing
 Run the test suite, which includes unit tests for math/hashing and integration tests using a mock HTTP server.
-```Bash
+```bash
 cargo test
 ```
 
