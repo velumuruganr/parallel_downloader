@@ -13,7 +13,9 @@ use parallel_downloader::{ArcRateLimiter, Args, DownloadState, download_chunk};
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let output_filename = args.output.unwrap_or_else(|| "output.bin".to_string());
+    let output_filename = args
+        .output
+        .unwrap_or_else(|| utils::get_filename_from_url(&args.url));
     let state_filename = format!("{}.state.json", output_filename);
 
     let state_result = tokio::fs::read_to_string(&state_filename).await;

@@ -1,9 +1,12 @@
 use crate::state::Chunk;
 use anyhow::{Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
+use percent_encoding::percent_decode_str;
 use reqwest::header::CONTENT_LENGTH;
+use sanitize_filename::sanitize;
 use sha2::{Digest, Sha256};
 use std::io::Read;
+use url::Url;
 
 /// fetches the Content-Length of a file from a URL using a HEAD request.
 ///
@@ -115,6 +118,44 @@ pub fn verify_file_integrity(path: &str, expected_hash: &str) -> Result<()> {
     }
 }
 
+/// Extracts a clean filename from a URL.
+///
+/// 1. Parses the URL.
+/// 2. Extracts the last segment of the path.
+/// 3. URL-decodes it (converts %20 to space, etc.).
+/// 4. Sanitizes it to remove characters invalid for the OS.
+/// 5. Falls back to "output.bin" if no valid filename is found.
+pub fn get_filename_from_url(url: &str) -> String {
+    let parsed_url = match Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return "output.bin".to_string(),
+    };
+
+    let mut url_segments = match parsed_url.path_segments() {
+        Some(s) => s,
+        None => return "output.bin".to_string(),
+    };
+
+    let last_segment = url_segments.next_back().unwrap_or("");
+
+    let decoded_name = percent_decode_str(last_segment)
+        .decode_utf8()
+        .unwrap_or(std::borrow::Cow::Borrowed("output.bin"))
+        .to_string();
+
+    if decoded_name.trim().is_empty() {
+        return "output.bin".to_string();
+    }
+
+    let clean_name = sanitize(decoded_name);
+
+    if clean_name.is_empty() {
+        "output.bin".to_string()
+    } else {
+        clean_name
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +210,29 @@ mod tests {
         assert!(result.is_err());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_filename_extraction() {
+        // Simple case
+        assert_eq!(
+            get_filename_from_url("https://example.com/archive.zip"),
+            "archive.zip"
+        );
+
+        // With query parameters (should ignore ?id=123)
+        assert_eq!(
+            get_filename_from_url("https://example.com/image.png?id=123&quality=high"),
+            "image.png"
+        );
+
+        // With URL encoding (%20)
+        assert_eq!(
+            get_filename_from_url("https://example.com/my%20vacation%20photo.jpg"),
+            "my vacation photo.jpg"
+        );
+
+        // Edge case: No filename (ends in slash)
+        assert_eq!(get_filename_from_url("https://example.com/"), "output.bin");
     }
 }
