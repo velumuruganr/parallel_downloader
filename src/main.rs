@@ -5,6 +5,7 @@ use governor::{Quota, RateLimiter};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::path::PathBuf;
 
 use parallel_downloader::state;
 use parallel_downloader::utils;
@@ -13,9 +14,20 @@ use parallel_downloader::{ArcRateLimiter, Args, DownloadState, download_chunk};
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let output_filename = args
+    let filename = args
         .output
         .unwrap_or_else(|| utils::get_filename_from_url(&args.url));
+
+    let directory = args.dir.unwrap_or_else(|| ".".to_string());
+
+    let mut output_path = PathBuf::from(&directory);
+    output_path.push(filename);
+
+    if directory != "." {
+        tokio::fs::create_dir_all(&directory).await?;
+    }
+
+    let output_filename = output_path.to_string_lossy().to_string();
     let state_filename = format!("{}.state.json", output_filename);
 
     let state_result = tokio::fs::read_to_string(&state_filename).await;

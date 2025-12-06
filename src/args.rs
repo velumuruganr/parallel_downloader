@@ -26,4 +26,8 @@ pub struct Args {
     /// A rate limit in bytes per second (e.g., 1048576 for 1MB/s).
     #[arg(long)]
     pub rate_limit: Option<u32>,
+
+    /// The directory to save the file in. Defaults to the current directory.
+    #[arg(short = 'd', long)]
+    pub dir: Option<String>,
 }

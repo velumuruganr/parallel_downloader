@@ -25,6 +25,8 @@ nonzero_ext = "0.3"
 url = "2.4"
 percent-encoding = "2.3"
 sanitize-filename = "0.5"
+config = "0.13"
+directories = "5.0"
 
 [dev-dependencies]
 tempfile = "3.8"
