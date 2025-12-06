@@ -1,8 +1,3 @@
-mod args;
-mod state;
-mod utils;
-mod worker;
-
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use futures_util::future::join_all;
@@ -11,11 +6,9 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use args::Args;
-use state::DownloadState;
-use worker::download_chunk;
-
-use crate::worker::ArcRateLimiter;
+use rfetch::state;
+use rfetch::utils;
+use rfetch::{ArcRateLimiter, Args, DownloadState, download_chunk};
 
 #[tokio::main]
 async fn main() -> Result<()> {
