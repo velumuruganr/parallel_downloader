@@ -14,10 +14,10 @@
 //! components are exposed for custom implementations.
 
 pub mod args;
+pub mod config;
 pub mod state;
 pub mod utils;
 pub mod worker;
-pub mod config;
 
 pub use args::Args;
 pub use state::DownloadState;

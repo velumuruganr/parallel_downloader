@@ -3,14 +3,14 @@ use clap::Parser;
 use futures_util::future::join_all;
 use governor::{Quota, RateLimiter};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::path::PathBuf;
 
+use parallel_downloader::config::Settings;
 use parallel_downloader::state;
 use parallel_downloader::utils;
 use parallel_downloader::{ArcRateLimiter, Args, DownloadState, download_chunk};
-use parallel_downloader::config::Settings;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -18,14 +18,14 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let threads = args.threads
-        .or(settings.threads)
-        .unwrap_or(4);
+    let threads = args.threads.or(settings.threads).unwrap_or(4);
 
-    let rate_limit_val = args.rate_limit
-        .or(settings.rate_limit);
+    let rate_limit_val = args.rate_limit.or(settings.rate_limit);
 
-    let directory = args.dir.or(settings.default_dir).unwrap_or_else(|| ".".to_string());
+    let directory = args
+        .dir
+        .or(settings.default_dir)
+        .unwrap_or_else(|| ".".to_string());
 
     let filename = args
         .output

@@ -1,10 +1,10 @@
-use serde::Deserialize;
-use config::{Config, File};
-use directories::ProjectDirs;
 use anyhow::Result;
+use config::{Config, Environment, File};
+use directories::ProjectDirs;
+use serde::Deserialize;
 
 /// Application configuration settings loaded from a file.
-/// 
+///
 /// # Fields
 /// * `threads` - Default number of concurrent download threads.
 /// * `rate_limit` - Default rate limit in bytes per second.
@@ -18,7 +18,7 @@ pub struct Settings {
 
 impl Settings {
     /// Loads the configuration settings from a file.
-    /// 
+    ///
     /// # Returns
     /// Returns a `Settings` instance with the loaded configuration.
     pub fn load() -> Result<Self> {
@@ -36,12 +36,11 @@ impl Settings {
             }
         };
 
+        s = s.add_source(Environment::with_prefix("PD").separator("__"));
+
         match s.build() {
-            Ok(config) => {
-                Ok(config.try_deserialize().unwrap_or_default())
-            },
-            Err(_) => Ok(Self::default())
+            Ok(config) => Ok(config.try_deserialize().unwrap_or_default()),
+            Err(_) => Ok(Self::default()),
         }
     }
 }
-        
