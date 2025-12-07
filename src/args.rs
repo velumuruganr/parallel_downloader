@@ -20,6 +20,9 @@ pub enum Commands {
         /// URL to download
         #[arg(short, long)]
         url: String,
+        /// Directory path
+        #[arg(short, long)]
+        dir: String,
     },
     /// List active downloads
     Status,

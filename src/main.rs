@@ -6,8 +6,10 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parallel_downloader::args::Commands;
 use parallel_downloader::config::Settings;
 use parallel_downloader::ipc::{Command, Response};
+use parallel_downloader::observer::ConsoleObserver;
 use parallel_downloader::state;
 use parallel_downloader::utils;
+
 use parallel_downloader::{ArcRateLimiter, Args, DownloadState, download_chunk};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -138,11 +140,12 @@ async fn process_url(
                 .progress_chars("=>-"),
         );
         pb.set_message(format!("{} [Part {}]", filename, i + 1));
+        let observer = Arc::new(ConsoleObserver { pb });
         let task = tokio::spawn(async move {
             download_chunk(
                 chunk,
                 filename,
-                pb,
+                observer,
                 state_ref,
                 state_file_ref,
                 limiter_ref,
@@ -184,8 +187,8 @@ async fn main() -> Result<()> {
         Some(Commands::Start) => {
             parallel_downloader::daemon::start_daemon(9090).await?;
         }
-        Some(Commands::Add { url }) => {
-            send_command(Command::Add { url }).await?;
+        Some(Commands::Add { url, dir }) => {
+            send_command(Command::Add { url, dir }).await?;
         }
         Some(Commands::Status) => {
             send_command(Command::Status).await?;

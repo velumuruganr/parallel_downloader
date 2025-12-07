@@ -1,8 +1,8 @@
+use crate::observer::ProgressObserver;
 use crate::state::{Chunk, DownloadState, save_state};
 use anyhow::{Context, Result};
 use governor::state::InMemoryState;
 use governor::{RateLimiter, clock::DefaultClock, state::direct::NotKeyed};
-use indicatif::ProgressBar;
 use reqwest::header::RANGE;
 use std::io::SeekFrom;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub type ArcRateLimiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>
 pub async fn download_chunk(
     chunk: Chunk,
     output_file: String,
-    pb: ProgressBar,
+    observer: Arc<dyn ProgressObserver>,
     state: Arc<Mutex<DownloadState>>,
     state_filename: String,
     limiter: Option<ArcRateLimiter>,
@@ -47,7 +47,7 @@ pub async fn download_chunk(
     let mut attempt = 0;
 
     if chunk.completed {
-        pb.finish_with_message("Already downloaded...");
+        observer.message("Already downloaded...".into());
         return Ok(());
     }
 
@@ -84,7 +84,7 @@ pub async fn download_chunk(
                     l.until_n_ready(n).await.unwrap();
                 }
 
-                pb.inc(response_bytes.len() as u64);
+                observer.inc(response_bytes.len() as u64);
                 file.write_all(&response_bytes).await?;
             }
 
@@ -99,16 +99,16 @@ pub async fn download_chunk(
 
                 save_state(&locked_state, &state_filename).await?;
 
-                pb.finish_with_message("Done!");
+                observer.finish();
                 return Ok(());
             }
             Err(e) => {
                 if attempt >= MAX_RETRIES {
-                    pb.finish_with_message(format!("Failed..{}", e));
+                    observer.message(format!("Failed..{}", e));
                     return Err(e);
                 }
 
-                pb.set_message(format!("Error: {}, Retrying in 2s...", e));
+                observer.message(format!("Error: {}, Retrying in 2s...", e));
                 sleep(Duration::from_secs(2)).await;
             }
         }

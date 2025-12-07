@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 use wiremock::matchers::{header, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use parallel_downloader::observer::ConsoleObserver;
 use parallel_downloader::state::{Chunk, DownloadState};
 use parallel_downloader::worker::download_chunk;
 
@@ -40,11 +41,13 @@ async fn test_download_single_chunk() {
     };
     let pb = ProgressBar::hidden(); // Invisible progress bar for testing
 
+    let observer = Arc::new(ConsoleObserver { pb });
+
     let client = reqwest::Client::new();
     let result = download_chunk(
         chunk,
         output_path.clone(),
-        pb,
+        observer,
         state.clone(),
         state_path.clone(),
         None, // No rate limiter

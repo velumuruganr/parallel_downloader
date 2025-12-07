@@ -17,6 +17,7 @@ pub mod args;
 pub mod config;
 pub mod daemon;
 pub mod ipc;
+pub mod observer;
 pub mod state;
 pub mod utils;
 pub mod worker;

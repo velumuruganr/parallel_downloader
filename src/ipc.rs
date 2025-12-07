@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum Command {
-    Add { url: String },
+    Add { url: String, dir: String },
     Status,
     Shutdown,
 }
