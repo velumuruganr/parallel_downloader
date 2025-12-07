@@ -1,0 +1,12 @@
+services:
+  pd:
+    build: .
+    container_name: parallel_downloader
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./downloads:/app/downloads
+    environment:
+      - PD__SERVER_ADDR=0.0.0.0
+      - PD__THREADS=4

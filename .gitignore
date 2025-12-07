@@ -1,4 +1,4 @@
 /target
 
 *dat
-*.dat.state.json
+*.state.json
