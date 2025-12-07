@@ -3,10 +3,13 @@
 //! This module contains the small CLI glue that parses arguments and
 //! either runs a standalone download or sends commands to the daemon.
 mod args;
+mod client;
+mod tui;
 
 use anyhow::Result;
 use args::{Args, Commands};
 use clap::Parser;
+use client::send_command_raw;
 use futures_util::future::join_all;
 use governor::{Quota, RateLimiter};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -19,26 +22,12 @@ use parallel_downloader::{ArcRateLimiter, download_chunk};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 
 /// Connect to the local daemon and send a `Command`.
 async fn send_command(cmd: Command) -> Result<()> {
-    let mut stream = TcpStream::connect("127.0.0.1:9090".to_string())
-        .await
-        .map_err(|_| anyhow::anyhow!("Could not connect to daemon. Is it running?"))?;
-
-    let json_req = serde_json::to_string(&cmd)?;
-    stream.write_all(json_req.as_bytes()).await?;
-
-    let mut buf = [0; 1024];
-    let n = stream.read(&mut buf).await?;
-    let json_resp = String::from_utf8_lossy(&buf[..n]);
-
-    let response: Response = serde_json::from_str(&json_resp)?;
-
+    let response = send_command_raw(cmd).await?;
     match response {
         Response::Ok(msg) => println!("✅ {}", msg),
         Response::Err(msg) => println!("❌ Error: {}", msg),
@@ -163,6 +152,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Status) => {
             send_command(Command::Status).await?;
+        }
+        Some(Commands::Tui) => {
+            tui::start_tui().await?;
         }
         Some(Commands::Stop) => {
             send_command(Command::Shutdown).await?;

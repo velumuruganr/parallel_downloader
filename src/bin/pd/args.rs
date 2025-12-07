@@ -67,4 +67,6 @@ pub enum Commands {
         #[arg(short = 'c', long)]
         concurrent_files: Option<usize>,
     },
+    /// Open the interactive TUI dashboard.
+    Tui,
 }
