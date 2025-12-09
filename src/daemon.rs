@@ -62,154 +62,180 @@ pub async fn start_daemon(port: u16, secret: Option<String>, bind_ip: String) ->
     }));
     let next_id = Arc::new(AtomicUsize::new(1));
 
+    let shutdown_token = CancellationToken::new();
+    let shutdown_token_ref = shutdown_token.clone();
+
+    // 2. Spawn a listener for Ctrl+C
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            println!("\nReceived Ctrl+C. Pausing all jobs and shutting down...");
+            shutdown_token_ref.cancel();
+        }
+    });
+
     loop {
-        let (mut socket, addr) = listener.accept().await?;
-        let secret_check = secret.clone();
-
-        let next_id_ref = next_id.clone();
-        let state_ref = global_state.clone();
-        let client_ref = client.clone();
-
-        tokio::spawn(async move {
-            let mut buf = [0; 4096];
-
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => return,
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Socket read error: {}", e);
-                    return;
-                }
-            };
-
-            let req_str = String::from_utf8_lossy(&buf[..n]);
-            let request: Request = match serde_json::from_str(&req_str) {
-                Ok(r) => r,
-                Err(e) => {
-                    let _ =
-                        send_response(&mut socket, Response::Err(format!("Invalid JSON: {}", e)))
-                            .await;
-                    return;
-                }
-            };
-
-            if let Some(ref server_pass) = secret_check
-                && request.secret.as_ref() != Some(server_pass)
-            {
-                println!("⚠️ Unauthorized attempt from {}", addr);
-                let _ = send_response(
-                    &mut socket,
-                    Response::Err("Unauthorized: Invalid secret".into()),
-                )
-                .await;
-                return;
+        tokio::select! {
+            _ = shutdown_token.cancelled() => {
+                println!("Daemon shutting down. Goodbye!");
+                // Wait briefly for tasks to detect cancellation and save state
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                return Ok(());
             }
+            accept_result = listener.accept() => {
+                let (mut socket, addr) = accept_result?;
+                let secret_check = secret.clone();
 
-            let command = request.command;
+                let next_id_ref = next_id.clone();
+                let state_ref = global_state.clone();
+                let client_ref = client.clone();
 
-            match command {
-                Command::Shutdown => {
-                    let _ =
-                        send_response(&mut socket, Response::Ok("Shutting down...".into())).await;
-                    std::process::exit(0);
-                }
-                Command::Status => {
-                    let locked = state_ref.lock().await;
-                    let mut list = Vec::new();
+                let shutdown_token_inner = shutdown_token.clone();
 
-                    for job in locked.jobs.values() {
-                        let current = job.downloaded_bytes.load(Ordering::Relaxed);
-                        let total = job.total_bytes.load(Ordering::Relaxed);
-                        let percent = if total > 0 {
-                            (current * 100) / total
-                        } else {
-                            0
-                        };
-                        list.push(JobStatus {
-                            id: job.id,
-                            filename: job.filename.clone(),
-                            progress_percent: percent,
-                            state: job.state.lock().await.clone(),
-                        });
-                    }
-                    list.sort_by_key(|j| j.id);
-                    let _ = send_response(&mut socket, Response::StatusList(list)).await;
-                }
-                Command::Pause { id } => {
-                    let locked = state_ref.lock().await;
-                    if let Some(job) = locked.jobs.get(&id) {
-                        let cancel_token_ref = job.cancel_token.lock().await;
-                        cancel_token_ref.cancel();
-                        let mut state_str = job.state.lock().await;
-                        *state_str = "Pausing...".into();
-                        let _ =
-                            send_response(&mut socket, Response::Ok(format!("Paused job #{}", id)))
-                                .await;
-                    } else {
-                        let _ =
-                            send_response(&mut socket, Response::Err("Job ID not found".into()))
-                                .await;
-                    }
-                }
-                Command::Resume { id } => {
-                    let locked = state_ref.lock().await;
-                    if let Some(job) = locked.jobs.get(&id) {
-                        let mut cancel_token_ref = job.cancel_token.lock().await;
-                        if !cancel_token_ref.is_cancelled() {
-                            let _ = send_response(
-                                &mut socket,
-                                Response::Err("Job is already running".into()),
-                            )
-                            .await;
+                tokio::spawn(async move {
+                    let mut buf = [0; 4096];
+
+                    let n = match socket.read(&mut buf).await {
+                        Ok(0) => return,
+                        Ok(n) => n,
+                        Err(e) => {
+                            eprintln!("Socket read error: {}", e);
                             return;
                         }
+                    };
 
-                        let new_token = CancellationToken::new();
-
-                        *cancel_token_ref = new_token
-                    } else {
-                        let _ =
-                            send_response(&mut socket, Response::Err("Job ID not found".into()))
-                                .await;
-                    }
-                }
-                Command::Add { url, dir } => {
-                    let id = next_id_ref.fetch_add(1, Ordering::SeqCst);
-                    let filename = crate::utils::get_filename_from_url(&url);
-
-                    let job_data = Arc::new(ActiveJobData {
-                        id,
-                        filename: filename.clone(),
-                        total_bytes: AtomicU64::new(0), // We'll set this after we fetch file size
-                        downloaded_bytes: AtomicU64::new(0),
-                        state: Mutex::new("Starting...".into()),
-                        cancel_token: Mutex::new(CancellationToken::new()),
-                        url: url.clone(),
-                        dir: dir.clone(),
-                    });
-                    {
-                        let mut locked = state_ref.lock().await;
-                        locked.jobs.insert(id, job_data.clone());
-                    }
-
-                    let _ = send_response(
-                        &mut socket,
-                        Response::Ok(format!("Added job #{}: {}", id, filename)),
-                    )
-                    .await;
-
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            perform_background_download(url, dir, job_data.clone(), client_ref)
-                                .await
-                        {
-                            let mut state = job_data.state.lock().await;
-                            *state = format!("Failed: {}", e);
+                    let req_str = String::from_utf8_lossy(&buf[..n]);
+                    let request: Request = match serde_json::from_str(&req_str) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ =
+                                send_response(&mut socket, Response::Err(format!("Invalid JSON: {}", e)))
+                                    .await;
+                            return;
                         }
-                    });
-                }
+                    };
+
+                    if let Some(ref server_pass) = secret_check
+                        && request.secret.as_ref() != Some(server_pass)
+                    {
+                        println!("⚠️ Unauthorized attempt from {}", addr);
+                        let _ = send_response(
+                            &mut socket,
+                            Response::Err("Unauthorized: Invalid secret".into()),
+                        )
+                        .await;
+                        return;
+                    }
+
+                    let command = request.command;
+
+                    match command {
+                        Command::Shutdown => {
+                            let _ =
+                                send_response(&mut socket, Response::Ok("Shutting down...".into())).await;
+
+                            shutdown_token_inner.cancel();
+                            std::process::exit(0);
+                        }
+                        Command::Status => {
+                            let locked = state_ref.lock().await;
+                            let mut list = Vec::new();
+
+                            for job in locked.jobs.values() {
+                                let current = job.downloaded_bytes.load(Ordering::Relaxed);
+                                let total = job.total_bytes.load(Ordering::Relaxed);
+                                let percent = if total > 0 {
+                                    (current * 100) / total
+                                } else {
+                                    0
+                                };
+                                list.push(JobStatus {
+                                    id: job.id,
+                                    filename: job.filename.clone(),
+                                    progress_percent: percent,
+                                    state: job.state.lock().await.clone(),
+                                });
+                            }
+                            list.sort_by_key(|j| j.id);
+                            let _ = send_response(&mut socket, Response::StatusList(list)).await;
+                        }
+                        Command::Pause { id } => {
+                            let locked = state_ref.lock().await;
+                            if let Some(job) = locked.jobs.get(&id) {
+                                let cancel_token_ref = job.cancel_token.lock().await;
+                                cancel_token_ref.cancel();
+                                let mut state_str = job.state.lock().await;
+                                *state_str = "Pausing...".into();
+                                let _ =
+                                    send_response(&mut socket, Response::Ok(format!("Paused job #{}", id)))
+                                        .await;
+                            } else {
+                                let _ =
+                                    send_response(&mut socket, Response::Err("Job ID not found".into()))
+                                        .await;
+                            }
+                        }
+                        Command::Resume { id } => {
+                            let locked = state_ref.lock().await;
+                            if let Some(job) = locked.jobs.get(&id) {
+                                let mut cancel_token_ref = job.cancel_token.lock().await;
+                                if !cancel_token_ref.is_cancelled() {
+                                    let _ = send_response(
+                                        &mut socket,
+                                        Response::Err("Job is already running".into()),
+                                    )
+                                    .await;
+                                    return;
+                                }
+
+                                let new_token = shutdown_token_inner.child_token();
+
+                                *cancel_token_ref = new_token
+                            } else {
+                                let _ =
+                                    send_response(&mut socket, Response::Err("Job ID not found".into()))
+                                        .await;
+                            }
+                        }
+                        Command::Add { url, dir } => {
+                            let id = next_id_ref.fetch_add(1, Ordering::SeqCst);
+                            let filename = crate::utils::get_filename_from_url(&url);
+                            let child_cancel_token = shutdown_token_inner.child_token();
+
+                            let job_data = Arc::new(ActiveJobData {
+                                id,
+                                filename: filename.clone(),
+                                total_bytes: AtomicU64::new(0), // We'll set this after we fetch file size
+                                downloaded_bytes: AtomicU64::new(0),
+                                state: Mutex::new("Starting...".into()),
+                                cancel_token: Mutex::new(child_cancel_token),
+                                url: url.clone(),
+                                dir: dir.clone(),
+                            });
+                            {
+                                let mut locked = state_ref.lock().await;
+                                locked.jobs.insert(id, job_data.clone());
+                            }
+
+                            let _ = send_response(
+                                &mut socket,
+                                Response::Ok(format!("Added job #{}: {}", id, filename)),
+                            )
+                            .await;
+
+                            tokio::spawn(async move {
+                                if let Err(e) =
+                                    perform_background_download(url, dir, job_data.clone(), client_ref)
+                                        .await
+                                {
+                                    let mut state = job_data.state.lock().await;
+                                    *state = format!("Failed: {}", e);
+                                }
+                            });
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 }
 
